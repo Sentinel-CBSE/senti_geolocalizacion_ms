@@ -1,0 +1,12 @@
+# env files
+.env
+
+# Personal files
+run.sh
+test.txt
+test.py
+
+# Idea and python files
+.idea
+__pycache__
+**/__pycache__

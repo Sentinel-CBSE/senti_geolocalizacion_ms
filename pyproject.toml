@@ -1,0 +1,12 @@
+[project]
+name = "senti-geolocalizacion-ms"
+version = "0.1.0"
+description = "Add your description here"
+requires-python = ">=3.13"
+dependencies = [
+    "azure-servicebus>=7.14.3",
+    "fastapi>=0.142.2",
+    "pydantic-settings>=2.15.0",
+    "redis[hiredis]",
+    "uvicorn>=0.54.0",
+]

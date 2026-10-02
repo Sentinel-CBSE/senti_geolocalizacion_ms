@@ -1,0 +1,50 @@
+services:
+  redis:
+    container_name: senti_redis
+    image: redis:7.4-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/var/lib/redis
+
+  sqlelge:
+    container_name: senti_sqlserver
+    image: mcr.microsoft.com/azure-sql-edge@sha256:902628a8be89e35dfb7895ca31d602974c7bafde4d583a0d0873844feb1c42cf
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "ReallyGoodPassword26."
+
+  servicebus:
+    container_name: senti_servicebus
+    image: mcr.microsoft.com/azure-messaging/servicebus-emulator:2.0.1
+    depends_on:
+      - sqlelge
+    ports:
+      - "5672:5672"
+    environment:
+      ACCEPT_EULA: "Y"
+      SQL_SERVER: sqlelge
+      MSSQL_SA_PASSWORD: "ReallyGoodPassword26."
+    volumes:
+      - ./servicebus-emulator/Config.json:/ServiceBus_Emulator/ConfigFiles/Config.json
+
+  app:
+    container_name: senti_geolocalizacion_ms
+    build: .
+    profiles: [ "full" ]
+    depends_on:
+      - redis
+      - servicebus
+    ports:
+      - "8000:8000"
+    environment:
+      REDIS_URL: redis://redis:6379
+      LOCATION_KEY: users_location
+      RADIUS_ALERT: 500
+      RADIUS_UNITY: M
+      CONNECTION_STR: Endpoint=sb://servicebus;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=SAS_KEY_VALUE;UseDevelopmentEmulator=true;
+      QUEUE_NAME: notificaciones
+      DEBUG: "true"
+
+volumes:
+  redis_data:

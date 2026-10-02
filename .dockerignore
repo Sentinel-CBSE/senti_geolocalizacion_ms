@@ -1,0 +1,15 @@
+.venv
+.git
+.idea
+__pycache__
+**/__pycache__
+*.pyc
+.env
+.env.*
+test.py
+test.txt
+run.sh
+servicebus-emulator
+docker-compose.yml
+Dockerfile
+.dockerignore
