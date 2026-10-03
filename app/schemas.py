@@ -1,15 +1,23 @@
 from enum import Enum
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field, ConfigDict
 
 # ---------------------------------------------------------------------------------------
-#                                       REQUESTS
+#                                 EVENTS (Event Grid data)
 # ---------------------------------------------------------------------------------------
+# Redis geo commands only accept these ranges. Validating them here matters: an
+# out-of-range coordinate makes Redis raise a ResponseError, which would otherwise be
+# reported as "Redis unavailable" (503) and retried by Event Grid for up to 24 hours.
+Latitude = Annotated[float, Field(ge=-85.05112878, le=85.05112878)]
+Longitude = Annotated[float, Field(ge=-180, le=180)]
+
+
 class UserLocation(BaseModel):
-    user_id: str = Field(alias='userId')
-    latitude: float
-    longitude: float
+    """`data` of a Sentinel.UbicacionActualizada event."""
+    user_id: str = Field(alias='userId', min_length=1)
+    latitude: Latitude
+    longitude: Longitude
 
 
 class IncidentType(str, Enum):
@@ -19,9 +27,10 @@ class IncidentType(str, Enum):
 
 
 class DataReportedIncident(BaseModel):
+    """`data` of a Sentinel.IncidenteReportado event."""
     incidentType: IncidentType = Field(alias='type')
-    latitude: float
-    longitude: float
+    latitude: Latitude
+    longitude: Longitude
     timestamp: int = Field(ge=0)
     reporting_user_id: str = Field(alias='reportingUserId', min_length=1)
 

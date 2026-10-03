@@ -10,7 +10,7 @@ from app.error_handlers import register_error_handlers
 from app.logging_config import configure_logging
 from app.request_context import request_context_middleware
 from app.schemas import StatusResponse
-from app.api.v1.routers import location_router, health_router, webhook_router
+from app.api.v1.routers import health_router, webhook_router
 
 configure_logging(settings.debug)
 logger = logging.getLogger(__name__)
@@ -63,7 +63,6 @@ def create_app() -> FastAPI:
     register_error_handlers(app)
 
     # ------ Routers ------
-    app.include_router(location_router, prefix='/api/v1')
     app.include_router(health_router, prefix='/api/v1')
     app.include_router(webhook_router, prefix='/api/v1')
 

@@ -4,23 +4,36 @@ Geolocation microservice for **SENTI**. It keeps track of where users are and, w
 a robbery is reported, finds the users close to it and queues a notification for
 each of them.
 
-- Stores user locations sent periodically by the mobile app (`senti_ma`) in Redis.
-- Receives `Sentinel.IncidenteReportado` events from Azure Event Grid via webhook.
+- Receives the users' locations (sent periodically by the mobile app `senti_ma`)
+  as `Sentinel.UbicacionActualizada` events from Azure Event Grid, and stores them
+  in Redis.
+- Receives `Sentinel.IncidenteReportado` events from Azure Event Grid.
 - Finds nearby users with Redis `GEOSEARCH`.
 - Publishes one notification message per nearby user to an Azure Service Bus queue,
   consumed by `senti_notificaciones_ms`.
 
+Both kinds of events are published by the API gateway, which receives the mobile
+app's requests and sets the user id from the caller's JWT. This service never
+receives requests from the app directly.
+
 ## Architecture
 
 ```
-                                          ┌──────────────────────────┐
-senti_ma ──POST /location/add_location──▶ │  senti_geolocalizacion_ms│──GEOADD/GEOSEARCH──▶ Redis
-Event Grid ──POST /webhook/incidents────▶ │        (FastAPI)         │
-                                          └──────────────────────────┘
-                                                       │ one message per nearby user
-                                                       ▼
-                                          Service Bus queue ──▶ senti_notificaciones_ms
+senti_ma ──▶ API gateway ──▶ Event Grid
+                                 │
+                                 ├─ Sentinel.UbicacionActualizada ─▶ POST /webhook/locations
+                                 └─ Sentinel.IncidenteReportado ───▶ POST /webhook/incidents
+                                                                            │
+                                     ┌──────────────────────────────────────┘
+                                     ▼
+                          senti_geolocalizacion_ms ──GEOADD/GEOSEARCH──▶ Redis
+                                     │ one message per nearby user
+                                     ▼
+                          Service Bus queue ──▶ senti_notificaciones_ms
 ```
+
+Each webhook has its own Event Grid subscription, so they're retried and scaled
+independently (location updates are far more frequent than incidents).
 
 ## Tech stack
 
@@ -111,26 +124,51 @@ running.
 
 ## API
 
-All business endpoints are under `/api/v1`.
+All business endpoints are under `/api/v1`, and all of them are Azure Event Grid
+webhooks (Event Grid schema):
 
-### `POST /api/v1/location/add_location`
+- The body is always an **array** of events, even with a single event.
+- Each webhook answers the subscription handshake
+  (`Microsoft.EventGrid.SubscriptionValidationEvent`) with
+  `{"validationResponse": "<code>"}`, and any other delivery with
+  `{"status": "ok"}`.
+- Events with another `eventType`, or with invalid `data`, are logged and skipped
+  without aborting the rest of the delivery.
 
-Stores or updates a user's location (`GEOADD` upserts).
+### `POST /api/v1/webhook/locations`
+
+Receives `Sentinel.UbicacionActualizada` events and stores each location
+(`GEOADD` upserts, so a redelivered event just writes the same location again):
 
 ```json
-{ "userId": "firebase-uid-abc123", "latitude": 4.6097, "longitude": -74.0817 }
+[
+  {
+    "id": "evt-loc-001",
+    "topic": "/subscriptions/.../topics/...",
+    "subject": "ubicaciones/firebase-uid-abc123",
+    "eventType": "Sentinel.UbicacionActualizada",
+    "eventTime": "2026-10-03T15:30:00.000Z",
+    "dataVersion": "1.0",
+    "data": {
+      "userId": "firebase-uid-abc123",
+      "latitude": 4.6097,
+      "longitude": -74.0817
+    }
+  }
+]
 ```
 
-Responds `204 No Content`.
+`latitude` must be within ±85.05112878 and `longitude` within ±180 (the ranges
+Redis geo commands accept); events outside them are skipped as invalid data.
+
+Event Grid doesn't guarantee delivery order, so a retried older location can
+overwrite a newer one. Nothing guards against that yet: doing so needs the event's
+timestamp and a per-user "last seen" check.
 
 ### `POST /api/v1/webhook/incidents`
 
-Azure Event Grid webhook (Event Grid schema). The body is always an **array** of
-events. Two event types are handled:
-
-- `Microsoft.EventGrid.SubscriptionValidationEvent` — the subscription handshake;
-  responds `{"validationResponse": "<code>"}`.
-- `Sentinel.IncidenteReportado` — a reported incident:
+Receives `Sentinel.IncidenteReportado` events, finds the users near each incident
+and queues a notification for each of them:
 
 ```json
 [
@@ -152,8 +190,7 @@ events. Two event types are handled:
 ]
 ```
 
-`type` is one of `armed_robbery`, `theft`, `burglary`. Events with any other
-`eventType`, or with an invalid `data`, are logged and skipped.
+`type` is one of `armed_robbery`, `theft`, `burglary`.
 
 ### Health checks
 
@@ -204,7 +241,6 @@ internal details. `details` is present for validation errors only.
 |--------|-------------------------------|-------------------------------------------------|
 | 400    | `invalid_event_payload`       | Malformed Event Grid body (permanent)           |
 | 404    | `not_found`                   | Unknown route                                   |
-| 422    | `validation_error`            | Invalid request body                            |
 | 500    | `internal_error`              | Unexpected error (a bug)                        |
 | 503    | `location_store_unavailable`  | Redis unreachable or timed out (transient)      |
 | 503    | `message_broker_unavailable`  | Service Bus failed (transient)                  |
@@ -230,14 +266,14 @@ app/
 ├── main.py                 # app factory, lifespan (clients), logging setup
 ├── config.py               # Settings (pydantic-settings)
 ├── dependencies.py         # FastAPI dependencies returning the shared clients
-├── schemas.py              # request, event and queue message models
+├── schemas.py              # event, response and queue message models
 ├── exceptions.py           # domain exceptions (status code + error code)
 ├── error_handlers.py       # turns every error into the common JSON shape
 ├── request_context.py      # request id, access log, last-resort error boundary
 ├── logging_config.py       # single log format (UTC timestamps + request id)
+├── event_grid.py           # shared webhook plumbing: event parsing, handshake
 ├── api/v1/routers/
-│   ├── location.py         # POST /location/add_location
-│   ├── webhook.py          # POST /webhook/incidents
+│   ├── webhook.py          # POST /webhook/locations, POST /webhook/incidents
 │   └── health.py           # GET /check/db
 └── services/
     ├── location.py         # GEOADD / GEOSEARCH
