@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 
 
 async def orchestrate_nearby_incidents(
+        user_id: str,
         longitude: float,
         latitude: float,
         redis: Redis,
@@ -28,6 +29,7 @@ async def orchestrate_nearby_incidents(
     this was called (see webhook.py). This function only reacts once the incident is
     already a confirmed fact.
 
+    :param user_id: id of the user that triggered the incident.
     :param longitude: longitude of where the incident happened.
     :param latitude: latitude of where the incident happened.
     :param redis: already-connected async Redis client, passed to get_users_nearby.
@@ -46,6 +48,17 @@ async def orchestrate_nearby_incidents(
     )
     if not users_nearby:
         logger.info("Incident %s: no users nearby, nothing to notify.", event_id)
+        return
+
+    # Remove the user that triggered the incident
+    for i, (user_nearby_id, _) in enumerate(users_nearby):
+        if user_nearby_id == user_id:
+            del users_nearby[i]
+            break
+    if not users_nearby:
+        logger.info(
+            "Incident %s: only the reporting user is nearby, nothing to notify.", event_id
+        )
         return
 
     logger.info(

@@ -61,6 +61,7 @@ async def receive_incident_events(
             event.id, data.incidentType, data.latitude, data.longitude,
         )
         await incidents.orchestrate_nearby_incidents(
+            user_id=data.reporting_user_id,
             longitude=data.longitude,
             latitude=data.latitude,
             redis=redis,
